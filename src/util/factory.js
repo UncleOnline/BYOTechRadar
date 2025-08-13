@@ -305,6 +305,10 @@ const Factory = function () {
   var self = {}
   var sheet
 
+  // Keep last multi-source payload for re-plotting with filters
+  let lastMultiSourcePayload = null
+  let lastMultiSourceTitle = 'Pasted JSON (multi-source)'
+
   function toLower(value) {
     return (value ?? '').toString().toLowerCase()
   }
@@ -387,28 +391,73 @@ const Factory = function () {
     return `<p><em>Sources</em></p><ul>${items}</ul>`
   }
 
-  function transformMultiSourcePayload(payload) {
+  function transformMultiSourcePayload(payload, options = {}) {
     const sources = payload.sources || []
     const blips = Array.isArray(payload.blips) ? payload.blips : []
-    const transformed = blips.map((b) => {
+    const transformed = blips
+      .map((b) => {
       const aggRing = aggregateRing(b.decisions || {}, sources)
       const isNew = aggregateIsNew(b.decisions || {})
       const disagreement = calcDisagreement(b.decisions || {})
       const perSourceHtml = buildPerSourceHtml(b.name, b.decisions || {}, sources)
       const baseDesc = b.description || ''
-      const disagreementBadge =
+        const disagreementBadge =
         disagreement > 0
           ? `<p><strong>Disagreement:</strong> ${disagreement} ring step(s)</p>`
           : ''
-      return {
+        const aggregateLine = `<p><strong>Aggregate:</strong> ${aggRing}</p>`
+        return {
         name: b.name,
         ring: aggRing,
         quadrant: b.quadrant,
         isNew: isNew,
-        description: `${baseDesc ? `<p>${baseDesc}</p>` : ''}${disagreementBadge}${perSourceHtml}`,
+          description: `${aggregateLine}${baseDesc ? `<p>${baseDesc}</p>` : ''}${disagreementBadge}${perSourceHtml}`,
       }
-    })
+      })
+      .filter((blip, idx) => {
+        if (!options.onlyDisagreements) return true
+        // Recompute disagreement quickly from source decisions
+        const d = blips[idx]?.decisions || {}
+        return calcDisagreement(d) > 0
+      })
     return transformed
+  }
+
+  function renderLegendAndControls(sources) {
+    const header = document.querySelector('.graph-header')
+    if (!header) return
+    header.innerHTML = ''
+    if (!sources || sources.length === 0) return
+    const wrapper = document.createElement('div')
+    wrapper.style.display = 'flex'
+    wrapper.style.justifyContent = 'flex-start'
+    wrapper.style.alignItems = 'center'
+    wrapper.style.gap = '12px'
+    wrapper.style.margin = '12px 0'
+
+    const legend = document.createElement('div')
+    legend.style.display = 'flex'
+    legend.style.flexWrap = 'wrap'
+    legend.style.gap = '12px'
+    sources.forEach((s) => {
+      const item = document.createElement('div')
+      item.style.display = 'flex'
+      item.style.alignItems = 'center'
+      item.style.gap = '6px'
+      const dot = document.createElement('span')
+      dot.style.display = 'inline-block'
+      dot.style.width = '10px'
+      dot.style.height = '10px'
+      dot.style.borderRadius = '50%'
+      dot.style.background = s.color || '#999'
+      const label = document.createElement('span')
+      label.textContent = s.label || s.id
+      item.appendChild(dot)
+      item.appendChild(label)
+      legend.appendChild(item)
+    })
+    wrapper.appendChild(legend)
+    header.appendChild(wrapper)
   }
 
   self.build = function () {
@@ -481,6 +530,9 @@ const Factory = function () {
               contentValidator.verifyContent()
               contentValidator.verifyHeaders()
               blips = _.map(data, new InputSanitizer().sanitize)
+              // Clear legend/controls if any from previous multi-source plot
+              const header = document.querySelector('.graph-header')
+              if (header) header.innerHTML = ''
             } else if (data && Array.isArray(data.blips)) {
               // Multi-source schema → transform to flat blips
               const transformed = transformMultiSourcePayload(data)
@@ -490,6 +542,9 @@ const Factory = function () {
               contentValidator.verifyHeaders()
               blips = _.map(transformed, new InputSanitizer().sanitize)
               title = data.title || 'Pasted JSON (multi-source)'
+              lastMultiSourcePayload = data
+              lastMultiSourceTitle = title
+              renderLegendAndControls(data.sources || [])
             } else {
               throw new InvalidContentError('Unsupported JSON shape. Provide an array of blips or a multi-source object.')
             }
