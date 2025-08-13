@@ -52,11 +52,12 @@ const plotRadar = function (title, blips, currentRadarName, alternativeRadars) {
     if (!quadrants[blip.quadrant]) {
       quadrants[blip.quadrant] = new Quadrant(blip.quadrant[0].toUpperCase() + blip.quadrant.slice(1))
     }
+    const isNewString = (blip.isNew ?? '').toString().toLowerCase()
     quadrants[blip.quadrant].add(
       new Blip(
         blip.name,
         ringMap[blip.ring],
-        blip.isNew.toLowerCase() === 'true',
+        isNewString === 'true',
         blip.status,
         blip.topic,
         blip.description,
@@ -113,10 +114,11 @@ const plotRadarGraph = function (title, blips, currentRadarName, alternativeRada
     const currentQuadrant = validateInputQuadrantOrRingName(quadrants, blip.quadrant)
     const ring = validateInputQuadrantOrRingName(ringMap, blip.ring)
     if (currentQuadrant && ring) {
+      const isNewString2 = (blip.isNew ?? '').toString().toLowerCase()
       const blipObj = new Blip(
         blip.name,
         ringMap[ring],
-        blip.isNew.toLowerCase() === 'true',
+        isNewString2 === 'true',
         blip.status,
         blip.topic,
         blip.description,
@@ -355,6 +357,39 @@ const Factory = function () {
       }
 
       setDocumentTitle()
+
+      // Wire up "Build from pasted JSON" on the homepage
+      const buildFromJsonBtn = document.getElementById('build-from-json')
+      if (buildFromJsonBtn) {
+        buildFromJsonBtn.addEventListener('click', () => {
+          try {
+            const textArea = document.getElementById('json-input')
+            const raw = (textArea && textArea.value) || '[]'
+            const data = JSON.parse(raw)
+            if (!Array.isArray(data) || data.length === 0) {
+              throw new InvalidContentError('JSON must be a non-empty array of blips')
+            }
+            const columnNames = Object.keys(data[0])
+            const contentValidator = new ContentValidator(columnNames)
+            contentValidator.verifyContent()
+            contentValidator.verifyHeaders()
+            const blips = _.map(data, new InputSanitizer().sanitize)
+            const title = 'Pasted JSON'
+            featureToggles.UIRefresh2022
+              ? plotRadarGraph(title, blips, 'JSON (pasted)', [])
+              : plotRadar(title, blips, 'JSON (pasted)', [])
+            document.querySelector('.helper-description > p').style.display = 'none'
+            document.querySelector('.input-sheet-form').style.display = 'none'
+            document.querySelector('.helper-description .loader-text').style.display = 'none'
+          } catch (exception) {
+            const invalidContentError =
+              exception instanceof InvalidContentError
+                ? exception
+                : new InvalidContentError(ExceptionMessages.INVALID_JSON_CONTENT)
+            plotErrorMessage(invalidContentError, 'json')
+          }
+        })
+      }
     }
   }
 

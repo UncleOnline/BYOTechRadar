@@ -22,7 +22,10 @@ const InputSanitizer = function () {
   function trimWhiteSpaces(blip) {
     var processedBlip = {}
     _.forOwn(blip, function (value, key) {
-      processedBlip[key.trim()] = value.trim()
+      const safeKey = typeof key === 'string' ? key.trim() : String(key)
+      // Coerce non-strings (e.g., booleans/numbers) to strings before trimming
+      const stringValue = value === undefined || value === null ? '' : String(value)
+      processedBlip[safeKey] = stringValue.trim()
     })
     return processedBlip
   }

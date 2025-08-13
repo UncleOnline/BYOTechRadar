@@ -68,6 +68,17 @@
           <input type="submit" value="Build my radar" />
           <a href="https://www.thoughtworks.com/radar/byor#guide">Need help?</a>
         </form>
+        <hr style="margin: 24px 0; opacity: 0.2" />
+        <p>Or paste a JSON array directly and build without hosting a file:</p>
+        <div>
+          <textarea id="json-input" rows="10" style="width:100%; resize:vertical" placeholder='[
+  {"name":"Example","ring":"trial","quadrant":"techniques","isNew":"TRUE","description":"..."}
+]'></textarea>
+          <div style="margin-top:8px; display:flex; gap:8px; align-items:center">
+            <button id="build-from-json" class="button" type="button">Build from pasted JSON</button>
+            <small>Fields: <code>name</code>, <code>ring</code>, <code>quadrant</code>, <code>isNew</code> ("TRUE"/"FALSE") or <code>status</code>, <code>description</code></small>
+          </div>
+        </div>
       </div>
       <div class="graph-header"></div>
       <div id="radar">
