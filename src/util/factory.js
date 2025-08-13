@@ -305,6 +305,112 @@ const Factory = function () {
   var self = {}
   var sheet
 
+  function toLower(value) {
+    return (value ?? '').toString().toLowerCase()
+  }
+
+  function getRingIndex(ringName) {
+    const names = Object.keys(
+      graphConfig.rings.reduce((acc, r) => {
+        acc[r] = true
+        return acc
+      }, {}),
+    )
+    const matched = validateInputQuadrantOrRingName(
+      graphConfig.rings.reduce((all, r, i) => {
+        all[r] = i
+        return all
+      }, {}),
+      ringName,
+    )
+    return matched ? graphConfig.rings.indexOf(matched) : -1
+  }
+
+  function aggregateRing(decisions, sources) {
+    // Weighted median using ring order in graphConfig.rings
+    const values = []
+    Object.keys(decisions).forEach((srcId) => {
+      const d = decisions[srcId]
+      if (!d || !d.ring) return
+      const idx = getRingIndex(d.ring)
+      if (idx === -1) return
+      const srcMeta = (sources || []).find((s) => s.id === srcId) || { weight: 1 }
+      const w = Number(srcMeta.weight || 1)
+      values.push({ idx, weight: w })
+    })
+    if (values.length === 0) return graphConfig.rings[0]
+    values.sort((a, b) => a.idx - b.idx)
+    const total = values.reduce((s, v) => s + v.weight, 0)
+    let cum = 0
+    for (let i = 0; i < values.length; i++) {
+      cum += values[i].weight
+      if (cum >= total / 2) return graphConfig.rings[values[i].idx]
+    }
+    return graphConfig.rings[values[values.length - 1].idx]
+  }
+
+  function calcDisagreement(decisions) {
+    const idxs = Object.values(decisions)
+      .map((d) => getRingIndex(d?.ring))
+      .filter((i) => i !== -1)
+    if (idxs.length <= 1) return 0
+    const min = Math.min(...idxs)
+    const max = Math.max(...idxs)
+    return max - min
+  }
+
+  function aggregateIsNew(decisions) {
+    const anyNew = Object.values(decisions).some((d) =>
+      toLower(d?.status) === 'new' || toLower(d?.isNew) === 'true',
+    )
+    return anyNew ? 'TRUE' : 'FALSE'
+  }
+
+  function buildPerSourceHtml(name, decisions, sources) {
+    // Only use tags allowed by sanitizeHtml relaxedOptions: p, em, strong, ul, li, br
+    const items = Object.keys(decisions)
+      .map((id) => {
+        const meta = (sources || []).find((s) => s.id === id) || { label: id }
+        const d = decisions[id] || {}
+        const ring = validateInputQuadrantOrRingName(
+          graphConfig.rings.reduce((all, r) => {
+            all[r] = true
+            return all
+          }, {}),
+          d.ring || '',
+        )
+        const status = d.status ? `, ${d.status}` : ''
+        const note = d.note ? ` — ${d.note}` : ''
+        return `<li><strong>${meta.label || id}:</strong> ${ring || '—'}${status}${note}</li>`
+      })
+      .join('')
+    return `<p><em>Sources</em></p><ul>${items}</ul>`
+  }
+
+  function transformMultiSourcePayload(payload) {
+    const sources = payload.sources || []
+    const blips = Array.isArray(payload.blips) ? payload.blips : []
+    const transformed = blips.map((b) => {
+      const aggRing = aggregateRing(b.decisions || {}, sources)
+      const isNew = aggregateIsNew(b.decisions || {})
+      const disagreement = calcDisagreement(b.decisions || {})
+      const perSourceHtml = buildPerSourceHtml(b.name, b.decisions || {}, sources)
+      const baseDesc = b.description || ''
+      const disagreementBadge =
+        disagreement > 0
+          ? `<p><strong>Disagreement:</strong> ${disagreement} ring step(s)</p>`
+          : ''
+      return {
+        name: b.name,
+        ring: aggRing,
+        quadrant: b.quadrant,
+        isNew: isNew,
+        description: `${baseDesc ? `<p>${baseDesc}</p>` : ''}${disagreementBadge}${perSourceHtml}`,
+      }
+    })
+    return transformed
+  }
+
   self.build = function () {
     if (!isValidConfig()) {
       plotError(new InvalidConfigError(ExceptionMessages.INVALID_CONFIG))
@@ -366,18 +472,28 @@ const Factory = function () {
             const textArea = document.getElementById('json-input')
             const raw = (textArea && textArea.value) || '[]'
             const data = JSON.parse(raw)
-            if (!Array.isArray(data) || data.length === 0) {
-              throw new InvalidContentError('JSON must be a non-empty array of blips')
+            let title = 'Pasted JSON'
+            let blips
+            if (Array.isArray(data)) {
+              if (data.length === 0) throw new InvalidContentError('JSON must be a non-empty array of blips')
+              const columnNames = Object.keys(data[0])
+              const contentValidator = new ContentValidator(columnNames)
+              contentValidator.verifyContent()
+              contentValidator.verifyHeaders()
+              blips = _.map(data, new InputSanitizer().sanitize)
+            } else if (data && Array.isArray(data.blips)) {
+              // Multi-source schema → transform to flat blips
+              const transformed = transformMultiSourcePayload(data)
+              const columnNames = Object.keys(transformed[0] || {})
+              const contentValidator = new ContentValidator(columnNames)
+              contentValidator.verifyContent()
+              contentValidator.verifyHeaders()
+              blips = _.map(transformed, new InputSanitizer().sanitize)
+              title = data.title || 'Pasted JSON (multi-source)'
+            } else {
+              throw new InvalidContentError('Unsupported JSON shape. Provide an array of blips or a multi-source object.')
             }
-            const columnNames = Object.keys(data[0])
-            const contentValidator = new ContentValidator(columnNames)
-            contentValidator.verifyContent()
-            contentValidator.verifyHeaders()
-            const blips = _.map(data, new InputSanitizer().sanitize)
-            const title = 'Pasted JSON'
-            featureToggles.UIRefresh2022
-              ? plotRadarGraph(title, blips, 'JSON (pasted)', [])
-              : plotRadar(title, blips, 'JSON (pasted)', [])
+            featureToggles.UIRefresh2022 ? plotRadarGraph(title, blips, 'JSON (pasted)', []) : plotRadar(title, blips, 'JSON (pasted)', [])
             document.querySelector('.helper-description > p').style.display = 'none'
             document.querySelector('.input-sheet-form').style.display = 'none'
             document.querySelector('.helper-description .loader-text').style.display = 'none'
